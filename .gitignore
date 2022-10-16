@@ -1,2 +1,5 @@
 .vscode
 build
+
+test.c
+CMakeLists.txt
