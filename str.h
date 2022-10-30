@@ -55,108 +55,9 @@ int8_t string_compare(const string_t str1, const string_t str2);
 
 #ifdef STR_IMPLIMENTATION
 
+#include <string.h>
 #include <malloc.h>
 #include <immintrin.h>
-
-
-static inline void _mem_cpy(void* dst, void* src, int64_t len) {
-	int64_t i = 0;
-
-	#if __AVX__
-
-	for(; i < len-31; i += 32) {
-		__m256i data = _mm256_loadu_si256((const void*)(src + i));
-		_mm256_storeu_si256((void*)(dst + i), data);
-	}
-
-	#endif // __AVX__
-
-	#if __SSE2__
-	for(; i < len-15; i += 16) {
-		__m128 data = _mm_load_ps((const float*)(src + i));
-		_mm_store_ps((float*)(dst + i), data);
-	}
-	#endif // __SSE2__
-	for(; i < len; i++) {
-		((char*)dst)[i] = ((char*)src)[i];
-	}
-}
-
-
-
-static inline int64_t _cstr_len(const char* cstr) {
-	if(cstr[0] == '\0') return 0;
-#if __AVX__
-
-	const __m256i ZERO = _mm256_setzero_si256();
-	int64_t offset = 0;
-	uint64_t aligned_addr = (uint64_t)cstr & 0xFFFFFFFFFFFFFFE0;
-	uint64_t diff = (uint64_t)cstr - aligned_addr;
-	if(diff > 0) {
-		__m256i data = (__m256i)_mm256_load_ps((const float*)aligned_addr);
-		data = _mm256_cmpeq_epi8(data, ZERO);
-
-		uint32_t mov_mask = _mm256_movemask_epi8(data);
-		mov_mask >>= diff;
-		if(mov_mask > 0) {
-			return (int64_t)__builtin_ctz(mov_mask);
-		}
-		offset = 32;
-	}
-
-	uint32_t mov_mask = 0;
-	while(mov_mask == 0) {
-		__m256i data = (__m256i)_mm256_load_ps((const float*)(aligned_addr + offset));
-		data = _mm256_cmpeq_epi8(data, ZERO);
-
-		mov_mask = _mm256_movemask_epi8(data);
-		offset += 32;
-	}
-	offset -= 32;
-	return (int64_t)__builtin_ctz(mov_mask) + offset - diff;
-
-
-
-#elif __SSE2__
-
-
-
-	const __m128i ZERO = _mm_setzero_si128();
-	int64_t offset = 0;
-	uint64_t aligned_addr = (uint64_t)cstr & 0xFFFFFFFFFFFFFFF0;
-	uint64_t diff = (uint64_t)cstr - aligned_addr;
-	if(diff > 0) {
-		__m128i data = (__m128i)_mm_load_ps((const float*)aligned_addr);
-		data = _mm_cmpeq_epi8(data, ZERO);
-
-		uint32_t mov_mask = _mm_movemask_epi8(data);
-		mov_mask >>= diff;
-		if(mov_mask > 0) {
-			return (int64_t)__builtin_ctz(mov_mask);
-		}
-		offset = 16;
-	}
-
-	uint32_t mov_mask = 0;
-	while(mov_mask == 0) {
-		__m128i data = (__m128i)_mm_load_ps((const float*)(aligned_addr + offset));
-		data = _mm_cmpeq_epi8(data, ZERO);
-
-		mov_mask = _mm_movemask_epi8(data);
-		offset += 16;
-	}
-	offset -= 16;
-	return (int64_t)__builtin_ctz(mov_mask) + offset - diff;
-
-#else
-
-	// if no simd, count slowly
-	int64_t len = 0;
-	while(c_str[len] != '\0') len++;
-	return len;
-
-#endif // __AVX__
-}
 
 
 string_t string_create(char* c_str, string_allocation_callbacks_t* allocator) {
@@ -164,17 +65,17 @@ string_t string_create(char* c_str, string_allocation_callbacks_t* allocator) {
 	string_t str = {0};
 	if(allocator != NULL) {
 		if(allocator->alloc != NULL) {
-			str.c_str = (char*)allocator->alloc(allocator->user_data, str_tmp.len+1, 16);
+			str.c_str = (char*)allocator->alloc(allocator->user_data, str_tmp.len+1, 4);
 			if(str.c_str == NULL) return str;
 		}
 	}
 	else {
-		str.c_str = (char*)calloc(1, str_tmp.len + 1);
+		str.c_str = (char*)aligned_alloc(4, str_tmp.len + 1);
 		if(str.c_str == NULL) return str;
 	}
 	str.len = str_tmp.len;
 	str.capacity = str.len;
-	_mem_cpy(str.c_str, str_tmp.c_str, str.len);
+	memcpy(str.c_str, str_tmp.c_str, str.len);
 	return str;
 }
 
@@ -207,20 +108,20 @@ string_t string_copy(const string_t string, string_allocation_callbacks_t* alloc
 	}
 	str.len = string.len;
 	str.capacity = str.len;
-	_mem_cpy(str.c_str, string.c_str, str.len);
+	memcpy(str.c_str, string.c_str, str.len);
 	return str;
 }
 
 
 int8_t string_copy_into(string_t* dst, const string_t src) {
 	if(dst->capacity < src.len) return 0;
-	_mem_cpy(dst->c_str, src.c_str, src.len+1);
+	memcpy(dst->c_str, src.c_str, src.len+1);
 	return 1;
 }
 
 int8_t string_cat(string_t* dst, const string_t src) {
 	if(dst->capacity - dst->len < src.len) return 0;
-	_mem_cpy(dst->c_str + dst->len, src.c_str, src.len);
+	memcpy(dst->c_str + dst->len, src.c_str, src.len);
 	dst->len += src.len;
 	dst->c_str[dst->len] = '\0';
 	return 1;
@@ -236,7 +137,7 @@ int8_t string_resize(string_t* string, const uint64_t new_size, string_allocatio
 		else if(allocator->alloc != NULL && allocator->free != NULL) {
 			char* c_str = allocator->alloc(allocator->user_data, new_size+1, 16);
 			uint64_t min_size = new_size < string->len ? new_size : string->len;
-			_mem_cpy(c_str, string->c_str, min_size);
+			memcpy(c_str, string->c_str, min_size);
 			allocator->free(allocator->user_data, string->c_str);
 			string->c_str = c_str;
 		}
@@ -254,7 +155,7 @@ int8_t string_resize(string_t* string, const uint64_t new_size, string_allocatio
 string_t string_get(char* c_str) {
 	string_t str;
 	str.c_str = c_str;
-	str.len = _cstr_len(c_str);
+	str.len = strlen(c_str);
 	str.capacity = 0;
 	return str;
 }
@@ -277,7 +178,7 @@ int64_t string_find_substring(const string_t string, const int64_t start_index, 
 
 int64_t string_find_char(const string_t str, const int64_t start_index, const char target) {
 
-#if __AVX__ == 0
+#if __AVX__ && !defined(STR_NO_AVX)
 
 	const __m256i TARGET = _mm256_set1_epi8(target);
 	int64_t offset = 0;
@@ -352,7 +253,7 @@ int8_t string_compare(const string_t str1, const string_t str2) {
 	if(str1.c_str[0] != str2.c_str[0]) return str1.c_str[0] - str2.c_str[0];
 	int64_t min_len = str1.len < str2.len ? str1.len : str2.len;
 	int64_t i = 0;
-#if __AVX__
+#if __AVX__ && !defined(STR_NO_AVX)
 
 
 	for(; i < min_len - 30; i += 32) {
