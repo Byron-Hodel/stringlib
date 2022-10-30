@@ -34,9 +34,9 @@ int8_t string_cat(string_t* dst, const string_t src);
 int8_t string_resize(string_t* string, const uint64_t new_size, string_allocation_callbacks_t* allocator);
 
 // returns a string given a c_string. Does not allocate memory, instaid, it copies the pointer into the string type
-inline string_t string_get(char* c_str);
+string_t string_get(char* c_str);
 // returns a substring of the passed string starting at index with a length of len
-inline string_t string_get_substring(string_t string, int64_t index, int64_t len);
+string_t string_get_substring(string_t string, int64_t index, int64_t len);
 // Note: does not allocate a new string, instaid, it points to the already existing string containing the substring,
 // to get a newly allocated string, use string_copy()
 int64_t string_find_substring(const string_t string, const int64_t start_index, const string_t target);
